@@ -1,65 +1,59 @@
 class DualGaugeCard extends HTMLElement {
+
   set hass(hass) {
     this._hass = hass;
-
     if (!this.card) {
       this._createCard();
     }
-
     this._update();
   }
 
   setConfig(config) {
-    if (!config.inner|| !config.inner.entity) {
+    if (!config.inner || !config.inner.entity) {
       throw new Error('You need to define an entity for the inner gauge');
     }
     if (!config.outer || !config.outer.entity) {
       throw new Error('You need to define an entity for the outer gauge');
     }
+
     this.config = JSON.parse(JSON.stringify(config));
 
-    if (!this.config.min) {
+    if (this.config.min === undefined || this.config.min === null) {
       this.config.min = 0;
     }
-    if (!this.config.max) {
+    if (this.config.max === undefined || this.config.max === null) {
       this.config.max = 100;
     }
-
-    if (this.config.precision === undefined) {
+    if (this.config.precision === undefined || this.config.precision === null) {
       this.config.precision = 2;
     }
-    if (this.config.inner.precision === undefined) {
+    if (this.config.inner.precision === undefined || this.config.inner.precision === null) {
       this.config.inner.precision = this.config.precision;
     }
-    if (this.config.outer.precision === undefined) {
+    if (this.config.outer.precision === undefined || this.config.outer.precision === null) {
       this.config.outer.precision = this.config.precision;
     }
-
-    if (!this.config.inner.min) {
+    if (this.config.inner.min === undefined || this.config.inner.min === null) {
       this.config.inner.min = this.config.min;
     }
-    if (!this.config.inner.max) {
+    if (this.config.inner.max === undefined || this.config.inner.max === null) {
       this.config.inner.max = this.config.max;
     }
-
-    if (!this.config.outer.min) {
+    if (this.config.outer.min === undefined || this.config.outer.min === null) {
       this.config.outer.min = this.config.min;
     }
-    if (!this.config.outer.max) {
+    if (this.config.outer.max === undefined || this.config.outer.max === null) {
       this.config.outer.max = this.config.max;
     }
-
     if (!this.config.hasOwnProperty('shadeInner')) {
-      this.config.shadeInner = true
+      this.config.shadeInner = true;
     }
-
     if (!this.config.inner.colors) {
       this.config.inner.colors = this.config.colors;
     }
     if (!this.config.outer.colors) {
       this.config.outer.colors = this.config.colors;
     }
-
     if (this.config.inner.colors) {
       this.config.inner.colors.sort((a, b) => a.value < b.value ? 1 : -1);
     }
@@ -70,17 +64,15 @@ class DualGaugeCard extends HTMLElement {
 
   _update() {
     if (this._hass.states[this.config['inner'].entity] == undefined ||
-       this._hass.states[this.config['outer'].entity] == undefined) {
+        this._hass.states[this.config['outer'].entity] == undefined) {
       console.warn("Undefined entity");
       if (this.card) {
         this.card.remove();
       }
-
       this.card = document.createElement('ha-card');
       if (this.config.header) {
         this.card.header = this.config.header;
       }
-
       const content = document.createElement('p');
       content.style.background = "#e8e87a";
       content.style.padding = "8px";
@@ -88,12 +80,12 @@ class DualGaugeCard extends HTMLElement {
         this.config['inner'].entity +
         "<br>- " + this.config['outer'].entity;
       this.card.appendChild(content);
-      
       this.appendChild(this.card);
       return;
     } else if (this.card && this.card.firstElementChild.tagName.toLowerCase() == "p") {
       this._createCard();
     }
+
     this._updateGauge('inner');
     this._updateGauge('outer');
   }
@@ -101,6 +93,7 @@ class DualGaugeCard extends HTMLElement {
   _updateGauge(gauge) {
     const gaugeConfig = this.config[gauge];
     const value = this._getEntityStateValue(this._hass.states[gaugeConfig.entity], gaugeConfig.attribute);
+
     this._setCssVariable(this.nodes.content, gauge + '-angle', this._calculateRotation(value, gaugeConfig));
     this.nodes[gauge].value.innerHTML = this._formatValue(value, gaugeConfig);
     if (gaugeConfig.label) {
@@ -126,47 +119,50 @@ class DualGaugeCard extends HTMLElement {
     return event;
   }
 
+  // ---- FIX: precision robuste, jamais de NaN / valeur brute non arrondie ----
   _formatValue(value, gaugeConfig) {
+    let num = parseFloat(value);
 
-    value = parseFloat(value);
-
-    if (gaugeConfig.precision !== undefined) {
-      value = value.toFixed(gaugeConfig.precision);
+    if (!Number.isFinite(num)) {
+      return '-';
     }
+
+    let precision = gaugeConfig.precision;
+    if (precision === undefined || precision === null || isNaN(precision)) {
+      precision = 2;
+    }
+    precision = Math.max(0, Math.min(10, parseInt(precision, 10)));
+
+    let formatted = num.toFixed(precision);
 
     if (gaugeConfig.unit) {
-      value = value.toString() + gaugeConfig.unit;
+      formatted = formatted.toString() + gaugeConfig.unit;
     }
-
-    return value;
+    return formatted;
   }
 
   _getEntityStateValue(entity, attribute) {
     if (!attribute) {
-      if(isNaN(entity.state)) return "-" ; //check if entity state is NaN
+      if (isNaN(entity.state)) return "-";
       else return entity.state;
     }
-
-    // return entity.attributes[attribute];
-    if(isNaN(entity.attributes[attribute])) return "-" ; //check if entity attribute is NaN
+    if (isNaN(entity.attributes[attribute])) return "-";
     else return entity.attributes[attribute];
   }
 
   _calculateRotation(value, gaugeConfig) {
-    if(isNaN(value)) return '180deg'; //check if value is NaN
+    if (isNaN(value)) return '180deg';
     const maxTurnValue = Math.min(Math.max(value, gaugeConfig.min), gaugeConfig.max);
     return (180 + (5 * (maxTurnValue - gaugeConfig.min)) / (gaugeConfig.max - gaugeConfig.min) / 10 * 360) + 'deg';
   }
 
   _findColor(value, gaugeConfig) {
     if (!gaugeConfig.colors) return;
-
     var i = 0,
       count = gaugeConfig.colors.length - 1;
     for (; i < count; i++) {
       if (value >= gaugeConfig.colors[i].value) return gaugeConfig.colors[i].color;
     }
-
     return gaugeConfig.colors[count].color;
   }
 
@@ -174,18 +170,14 @@ class DualGaugeCard extends HTMLElement {
     if (this.card) {
       this.card.remove();
     }
-
     this.card = document.createElement('ha-card');
     if (this.config.header) {
       this.card.header = this.config.header;
     }
-
     const content = document.createElement('div');
     this.card.appendChild(content);
-
     this.styles = document.createElement('style');
     this.card.appendChild(this.styles);
-
     this.appendChild(this.card);
 
     content.classList.add('gauge-dual-card');
@@ -195,24 +187,17 @@ class DualGaugeCard extends HTMLElement {
           <div class="gauge-background circle-container">
             <div class="circle"></div>
           </div>
-
           <div class="outer-gauge circle-container">
             <div class="circle"></div>
           </div>
-
           <div class="inner-gauge circle-container small-circle">
             <div class="circle"></div>
           </div>
-
-
           <div class="gauge-value gauge-value-outer"></div>
           <div class="gauge-label gauge-label-outer"></div>
-
           <div class="gauge-value gauge-value-inner"></div>
           <div class="gauge-label gauge-label-inner"></div>
-
           <div class="gauge-title"></div>
-
         </div>
       </div>
     `;
@@ -248,6 +233,11 @@ class DualGaugeCard extends HTMLElement {
       this.nodes.content.classList.add('shadeInner');
     }
 
+    // Position haute des données si aucun titre/header configuré
+    if (!this.config.title && !this.config.header) {
+      this.nodes.content.classList.add('no-title');
+    }
+
     if (this.config.cardwidth) {
       this._setCssVariable(this.nodes.content, 'gauge-card-width', this.config.cardwidth + 'px');
     }
@@ -272,20 +262,17 @@ class DualGaugeCard extends HTMLElement {
         --outer-color: var(--primary-color);
         --inner-color: var(--primary-color);
         --gauge-background-color: var(--secondary-background-color);
-
         --outer-angle: 90deg;
         --inner-angle: 90deg;
         --gauge-width: calc(var(--gauge-card-width) / 10.5);
         --value-font-size: calc(var(--gauge-card-width) / 17);
         --title-font-size: calc(var(--gauge-card-width) / 14);
         --label-font-size: calc(var(--gauge-card-width) / 20);
-
         width: var(--gauge-card-width);
         padding: 16px;
         box-sizing:border-box;
         margin: 6px auto;
       }
-
       .gauge-dual-card div {
         box-sizing:border-box
       }
@@ -295,14 +282,12 @@ class DualGaugeCard extends HTMLElement {
         height: 0;
         padding-bottom: 50%;
       }
-
       .gauge-frame {
         width: 100%;
         height: 0;
         padding-bottom:100%;
         position: relative;
       }
-
       .circle {
         position: absolute;
         top: 0;
@@ -313,7 +298,6 @@ class DualGaugeCard extends HTMLElement {
         border: var(--gauge-width) solid;
         transition: border-color .5s linear;
       }
-
       .circle-container {
         position: absolute;
         transform-origin: 50% 100%;
@@ -324,18 +308,15 @@ class DualGaugeCard extends HTMLElement {
         overflow: hidden;
         transition: transform .5s linear;
       }
-
       .small-circle .circle {
         top: 20%;
         left: 10%;
         width: 80%;
         height: 160%;
       }
-
       .gauge-background .circle {
         border: calc(var(--gauge-width) * 2 - 2px) solid var(--gauge-background-color);
       }
-
       .gauge-title {
         position: absolute;
         bottom: 51%;
@@ -345,56 +326,59 @@ class DualGaugeCard extends HTMLElement {
         font-size: var(--title-font-size);
       }
 
+      /* ---- Valeurs centrées au milieu: outer justifié à droite, inner à gauche ---- */
       .gauge-value, .gauge-label {
         position: absolute;
         bottom: 50%;
-        width: 81%;
-        text-align: center;
+        width: 48%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
-
       .gauge-value {
-        margin-bottom:15%;
+        margin-bottom:14%;
         font-size: var(--value-font-size);
         font-weight: bold;
       }
-
       .gauge-label {
         font-size: var(--label-font-size);
         margin-bottom:10%;
       }
-
+      /* Position basse quand pas de titre : les data peuvent descendre */
+      .no-title .gauge-value {
+        margin-bottom: 4%;
+      }
+      .no-title .gauge-label {
+        margin-bottom: 0%;
+      }
       .gauge-value-outer, .gauge-label-outer {
+        right: 50%;
+        text-align: right;
+        padding-right: 8px;
         color: var(--outer-color);
       }
-
-
       .gauge-value-inner, .gauge-label-inner {
-        right: 0;
+        left: 50%;
+        text-align: left;
+        padding-left: 8px;
         color: var(--inner-color);
       }
-
 
       .outer-gauge {
         transform: rotate(var(--outer-angle));
       }
-
       .outer-gauge .circle {
         border-color: var(--outer-color);
       }
-
-
       .inner-gauge {
         transform: rotate(var(--inner-angle));
       }
-
       .inner-gauge .circle {
         border-color: var(--inner-color);
       }
-
-      .shadeInner .gauge-value-inner, .shadeInner .gauge-label-inner, .shadeInner .inner-gauge .circle   {
+      .shadeInner .gauge-value-inner, .shadeInner .gauge-label-inner, .shadeInner .inner-gauge .circle {
         filter: brightness(75%);
       }
-
     `;
   }
 }
