@@ -1,10 +1,12 @@
 # Dual gauge card
 
-> [!IMPORTANT]
-> **Looking for new maintainer!**
-> 
-> I can't find the time or inspiration to take care of this project anymore.  
-> So if you'd like to become the new maintainer of this project please let me know via a Pull request!
+⚠️ **Maintained fork** de [custom-cards/dual-gauge-card](https://github.com/custom-cards/dual-gauge-card) 
+> (original project abandoned). Version 0.6.0 — CSS bug fixes and improved precision.
+
+## Changes in v0.6.0
+- Fixed overlapping of the two gauges (CSS bug)
+- Fixed the `precision` option, which previously had no effect
+- Data positioning is now automatically adjusted depending on whether a `title:` is present
 
   
 Two gauges in one, built mostly with CSS.
