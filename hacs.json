@@ -1,5 +1,7 @@
 {
-  "name": "Dual gauge card",
+  "name": "Dual Gauge Card",
   "filename": "dual-gauge-card.js",
+  "documentation": "https://github.com/thed6bel/dual-gauge-card",
+  "issues": "https://github.com/thed6bel/dual-gauge-card/issues",
   "content_in_root": true
 }
