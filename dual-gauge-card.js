@@ -1,6 +1,6 @@
 // =============================================================================
 //  Dual Gauge Card  –  v0.8.0
-//  Maintained fork of custom-cards/dual-gauge-card
+//  Maintained fork of custom-cards/dual-gauge-card 
 //  Changelog v0.8.0:
 //    - Register card in window.customCards for HA card picker
 //    - Add getCardSize() for proper HA layout
