@@ -1,7 +1,7 @@
 # Dual Gauge Card
 
 > 🔧 **Maintained fork** of [custom-cards/dual-gauge-card](https://github.com/custom-cards/dual-gauge-card) (original project abandoned since 2021).
-> This version fixes several bugs introduced by recent Home Assistant updates.
+> This version fixes several bugs introduced by recent Home Assistant updates and adds a full visual editor.
 
 A Lovelace card displaying two concentric gauges in a single visual component — great for comparing two related sensors (e.g. power and current, actual vs. target temperature, etc.).
 
@@ -9,12 +9,16 @@ A Lovelace card displaying two concentric gauges in a single visual component �
 
 ---
 
-## ✨ What's new in v0.6.0
+## ✨ What's new in v0.8.3
 
-- **Fix gauge overlap** : CSS bug that made values completely unreadable on recent HA versions
-- **Fix `precision` option** : rounding had no effect at all, sensors were showing raw 10+ digit numbers
-- **Automatic data positioning** : when a `title:` is set, values shift up automatically to leave room for it; without a title, they sit lower
-- **Centered display** : outer and inner values meet at the center of the dial (outer right-aligned, inner left-aligned) for a cleaner and more readable layout
+- **Visual editor** : full GUI editor in the Lovelace card picker — no more YAML required for basic setup
+- **Clickable zones** : the left half opens the outer entity detail, the right half opens the inner entity detail — with `cursor: pointer` and hover feedback
+- **Card picker registration** : the card now appears in the "Add card" dialog via `window.customCards`
+- **`getCardSize()`** : proper HA layout sizing
+- **`header` option** : native `ha-card` title support (above the card)
+- **`background_color` option** : configurable gauge track color
+- **Smart rebuild** : structural config changes (title, animation, stroke width…) trigger a clean card rebuild without full page reload
+- **Bug fix** : `precision` option now works correctly at both card and gauge level
 
 ---
 
@@ -36,7 +40,7 @@ A Lovelace card displaying two concentric gauges in a single visual component �
    - Type: **JavaScript Module**
 4. Reload Home Assistant
 
-> 💡 **Tip**: When updating the file manually, append a version suffix to the URL (e.g. `/local/dual-gauge-card.js?v=2`) to force the browser to fetch the new version instead of serving the cached one.
+> 💡 **Tip**: When updating the file manually, append a version suffix to the URL (e.g. `/local/dual-gauge-card.js?v=0.8.3`) to force the browser to fetch the new version instead of serving the cached one. Always use a higher number than the previous version.
 
 ---
 
@@ -44,30 +48,34 @@ A Lovelace card displaying two concentric gauges in a single visual component �
 
 ### General options
 
-| Option             | Type    | Default | Description |
-|--------------------|---------|---------|-------------|
-| `title`            | string  | —       | Title displayed at the bottom center of the gauge |
-| `min`              | number  | `0`     | Shared minimum value for both gauges |
-| `max`              | number  | `100`   | Shared maximum value for both gauges |
-| `precision`        | number  | `2`     | Number of decimal places (inherited by `inner` and `outer` if not set individually) |
-| `cardwidth`        | number  | `300`   | Card width in pixels |
-| `background_color` | string  | —       | Background color of the gauge track |
-| `shadeInner`       | boolean | `true`  | Darkens the inner gauge by 25% to visually distinguish it from the outer one |
+| Option             | Type    | Default | Description                                                                          |
+| ------------------ | ------- | ------- | ------------------------------------------------------------------------------------ |
+| `header`           | string  | —       | Title displayed above the card (native ha-card header)                               |
+| `title`            | string  | —       | Title displayed inside the gauge at the bottom center                                |
+| `min`              | number  | `0`     | Shared minimum value for both gauges                                                 |
+| `max`              | number  | `100`   | Shared maximum value for both gauges                                                 |
+| `precision`        | number  | `2`     | Number of decimal places (inherited by `inner` and `outer` if not set individually)  |
+| `cardwidth`        | number  | —       | Card width in pixels (auto-responsive if not set)                                    |
+| `stroke_width`     | number  | —       | Gauge arc stroke width in pixels (auto if not set)                                   |
+| `background_color` | string  | —       | Background color of the gauge track (CSS value or HA variable)                       |
+| `shadeInner`       | boolean | `true`  | Darkens the inner gauge by 25% to visually distinguish it from the outer one         |
+| `animate`          | boolean | `true`  | Smooth transition animation when values change                                       |
 
 ### `inner` and `outer` options
 
 These options apply identically to both gauges. Values defined at the individual level (`inner:` / `outer:`) take priority over shared ones.
 
-| Option      | Type   | Default       | Description |
-|-------------|--------|---------------|-------------|
-| `entity`    | string | **required**  | HA entity to display |
-| `attribute` | string | —             | Entity attribute to use (if different from `state`) |
-| `label`     | string | —             | Text shown below the value |
-| `unit`      | string | —             | Unit appended after the value |
-| `min`       | number | shared value  | Minimum for this gauge |
-| `max`       | number | shared value  | Maximum for this gauge |
-| `precision` | number | shared value  | Decimal places for this gauge |
-| `colors`    | list   | —             | Color thresholds based on value (see below) |
+| Option      | Type   | Default      | Description                                         |
+| ----------- | ------ | ------------ | --------------------------------------------------- |
+| `entity`    | string | **required** | HA entity to display                                |
+| `template`  | string | —            | Jinja2 template as alternative to `entity`          |
+| `attribute` | string | —            | Entity attribute to use (if different from `state`) |
+| `label`     | string | —            | Text shown below the value                          |
+| `unit`      | string | —            | Unit appended after the value (auto from entity if not set) |
+| `min`       | number | shared value | Minimum for this gauge                              |
+| `max`       | number | shared value | Maximum for this gauge                              |
+| `precision` | number | shared value | Decimal places for this gauge                       |
+| `colors`    | list   | —            | Color thresholds based on value (see below)         |
 
 ### Color configuration
 
@@ -75,7 +83,7 @@ Colors are defined as a list of thresholds. The first entry whose `value` is les
 
 The list is sorted automatically — no need to order it in your config.
 
-Colors can be defined once at the root level for both gauges, or individually per gauge.
+Colors can be defined once at the root level (applied to both gauges), or individually per gauge.
 
 ---
 
@@ -86,19 +94,11 @@ Colors can be defined once at the root level for both gauges, or individually pe
 ```yaml
 type: custom:dual-gauge-card
 precision: 2
-inner:
-  colors:
-    - color: var(--label-badge-red)
-      value: 37
-    - color: var(--label-badge-yellow)
-      value: 35
-    - color: var(--label-badge-green)
-      value: 0
-  entity: sensor.dsmr_reader_current_l1
-  label: Amp
-  max: 40
-  min: 0
 outer:
+  entity: sensor.dsmr_reader_power_consumed
+  label: kW
+  min: 0
+  max: 9
   colors:
     - color: var(--label-badge-red)
       value: 9
@@ -106,10 +106,18 @@ outer:
       value: 7
     - color: var(--label-badge-green)
       value: 0
-  entity: sensor.dsmr_reader_power_consumed
-  label: kW
-  max: 9
+inner:
+  entity: sensor.dsmr_reader_current_l1
+  label: Amp
   min: 0
+  max: 40
+  colors:
+    - color: var(--label-badge-red)
+      value: 37
+    - color: var(--label-badge-yellow)
+      value: 35
+    - color: var(--label-badge-green)
+      value: 0
 ```
 
 ### Thermostat (current vs. target temperature)
@@ -141,9 +149,29 @@ inner:
       value: 0
 ```
 
+### With header and custom styling
+
+```yaml
+type: custom:dual-gauge-card
+header: Solar Production
+background_color: var(--secondary-background-color)
+shadeInner: true
+animate: true
+outer:
+  entity: sensor.solar_power
+  label: kW
+  min: 0
+  max: 6
+inner:
+  entity: sensor.solar_current
+  label: Amp
+  min: 0
+  max: 25
+```
+
 ---
 
 ## Credits
 
-- Original project: [Rocka84/dual-gauge-card](https://github.com/custom-cards/dual-gauge-card) — MIT license
-- Fork & fixes: [@TheD6Bel](https://github.com/thed6bel)
+- Original project: [custom-cards/dual-gauge-card](https://github.com/custom-cards/dual-gauge-card) — MIT license
+- Fork & fixes v0.6+: [@TheD6Bel](https://github.com/thed6bel)
