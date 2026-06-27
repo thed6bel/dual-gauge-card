@@ -1,20 +1,12 @@
 // =============================================================================
-//  Dual Gauge Card  –  v0.8.0
-//  Maintained fork of custom-cards/dual-gauge-card 
-//  Changelog v0.8.0:
-//    - Register card in window.customCards for HA card picker
-//    - Add getCardSize() for proper HA layout
-//    - Editor: full LitElement rewrite for reactive updates
-//    - Editor: sync all fields when config changes externally
-//    - Editor: add background_color + header fields
-//    - Editor: native color picker alongside text input for thresholds
-//    - Editor: validation feedback on missing entities
-//    - Editor: color list rebuilt without losing focus
+//  Dual Gauge Card  –  v0.8.3
+//  Maintained fork of custom-cards/dual-gauge-card
+//  Basé sur v0.7.0 (structure DOM/CSS éprouvée) + améliorations:
+//    - Éditeur visuel complet (shadow DOM)
+//    - Zones cliquables: moitié gauche/droite de la carte
+//    - getCardSize(), window.customCards
+//    - _needsRebuild pour rebuild propre
 // =============================================================================
-
-// ---------------------------------------------------------------------------
-//  Main card
-// ---------------------------------------------------------------------------
 
 class DualGaugeCard extends HTMLElement {
 
@@ -31,16 +23,13 @@ class DualGaugeCard extends HTMLElement {
 
   static getStubConfig() {
     return {
-      title: '',
       precision: 2,
       outer: { entity: '', label: 'Outer', min: 0, max: 100 },
       inner: { entity: '', label: 'Inner', min: 0, max: 100 },
     };
   }
 
-  getCardSize() {
-    return 3;
-  }
+  getCardSize() { return 3; }
 
   disconnectedCallback() {
     Object.values(this._templateSubscriptions).forEach(fn => typeof fn === 'function' && fn());
@@ -60,22 +49,32 @@ class DualGaugeCard extends HTMLElement {
     this._update();
   }
 
-  setConfig(config) {
-    if (!config.inner || (!config.inner.entity && !config.inner.template)) {
-      throw new Error('inner gauge requires either entity or template');
-    }
-    if (!config.outer || (!config.outer.entity && !config.outer.template)) {
-      throw new Error('outer gauge requires either entity or template');
-    }
+  _needsRebuild(newCfg, oldCfg) {
+    if (!oldCfg) return false;
+    return (
+      !!newCfg.header     !== !!oldCfg.header     ||
+      !!newCfg.title      !== !!oldCfg.title      ||
+      !!newCfg.shadeInner !== !!oldCfg.shadeInner ||
+      !!newCfg.animate    !== !!oldCfg.animate    ||
+      newCfg.stroke_width !== oldCfg.stroke_width ||
+      newCfg.cardwidth    !== oldCfg.cardwidth
+    );
+  }
 
+  setConfig(config) {
+    if (!config.inner || (!config.inner.entity && !config.inner.template))
+      throw new Error('inner gauge requires either entity or template');
+    if (!config.outer || (!config.outer.entity && !config.outer.template))
+      throw new Error('outer gauge requires either entity or template');
+
+    const prevConfig = this.config;
     this.config = JSON.parse(JSON.stringify(config));
 
     if (this.config.min == null)       this.config.min = 0;
     if (this.config.max == null)       this.config.max = 100;
     if (this.config.precision == null) this.config.precision = 2;
-    if (!this.config.hasOwnProperty('shadeInner'))   this.config.shadeInner = true;
-    if (!this.config.hasOwnProperty('animate'))      this.config.animate = true;
-    if (!this.config.hasOwnProperty('show_minmax'))  this.config.show_minmax = false;
+    if (!this.config.hasOwnProperty('shadeInner')) this.config.shadeInner = true;
+    if (!this.config.hasOwnProperty('animate'))    this.config.animate = true;
 
     for (const g of ['inner', 'outer']) {
       const gc = this.config[g];
@@ -84,6 +83,13 @@ class DualGaugeCard extends HTMLElement {
       if (gc.max == null)       gc.max = this.config.max;
       if (!gc.colors && this.config.colors) gc.colors = [...this.config.colors];
       if (gc.colors) gc.colors.sort((a, b) => a.value < b.value ? 1 : -1);
+    }
+
+    if (this._needsRebuild(this.config, prevConfig) && this.card) {
+      this.card.remove();
+      this.card  = null;
+      this.nodes = null;
+      if (this._hass) { this._createCard(); this._setupTemplates(); this._update(); }
     }
   }
 
@@ -100,7 +106,7 @@ class DualGaugeCard extends HTMLElement {
             { type: 'render_template', template: cfg.template }
           );
         } catch (e) {
-          console.error(`dual-gauge-card: template error for ${gauge}:`, e);
+          console.error('dual-gauge-card: template error for ' + gauge + ':', e);
         }
       }
     }
@@ -116,7 +122,7 @@ class DualGaugeCard extends HTMLElement {
       this.card = document.createElement('ha-card');
       if (this.config.header) this.card.header = this.config.header;
       const msg = document.createElement('p');
-      msg.style.cssText = 'background:#e8e87a;padding:8px;';
+      msg.style.cssText = 'background:#e8e87a;padding:8px;margin:0;';
       const missing = [];
       if (!innerOk) missing.push(this.config.inner.entity);
       if (!outerOk) missing.push(this.config.outer.entity);
@@ -142,9 +148,8 @@ class DualGaugeCard extends HTMLElement {
   _getUnit(gauge) {
     const cfg = this.config[gauge];
     if (cfg.unit !== undefined) return cfg.unit;
-    if (cfg.entity && this._hass.states[cfg.entity]) {
+    if (cfg.entity && this._hass.states[cfg.entity])
       return this._hass.states[cfg.entity].attributes.unit_of_measurement || '';
-    }
     return '';
   }
 
@@ -155,16 +160,11 @@ class DualGaugeCard extends HTMLElement {
 
     this._setCssVariable(this.nodes.content, gauge + '-angle', this._calculateRotation(value, cfg));
     const formatted = this._formatValue(value, cfg);
-    this.nodes[gauge].value.innerHTML = unit ? `${formatted} ${unit}` : formatted;
+    this.nodes[gauge].value.innerHTML = unit ? formatted + ' ' + unit : formatted;
     if (cfg.label) this.nodes[gauge].label.innerHTML = cfg.label;
 
     const color = this._findColor(value, cfg);
     if (color) this._setCssVariable(this.nodes.content, gauge + '-color', color);
-
-    if (this.config.show_minmax && this.nodes[gauge].min) {
-      this.nodes[gauge].min.innerHTML = cfg.min;
-      this.nodes[gauge].max.innerHTML = cfg.max;
-    }
   }
 
   _showDetails(gauge) {
@@ -202,24 +202,32 @@ class DualGaugeCard extends HTMLElement {
     return gaugeConfig.colors[gaugeConfig.colors.length - 1].color;
   }
 
+  _setCssVariable(node, variable, value) {
+    node.style.setProperty('--' + variable, value);
+  }
+
+  // -----------------------------------------------------------------------
+  //  _createCard — structure DOM identique au v0.7 qui fonctionnait,
+  //  avec en plus deux zones cliquables transparentes (gauche/droite).
+  // -----------------------------------------------------------------------
+
   _createCard() {
     if (this.card) this.card.remove();
     this.card = document.createElement('ha-card');
     if (this.config.header) this.card.header = this.config.header;
+
+    // Le <style> ET le content sont enfants directs de ha-card.
+    // C'est le pattern exact du v0.7 original qui fonctionnait.
     const content = document.createElement('div');
+    content.classList.add('gauge-dual-card');
     this.card.appendChild(content);
+
     this.styles = document.createElement('style');
     this.card.appendChild(this.styles);
+
     this.appendChild(this.card);
 
-    content.classList.add('gauge-dual-card');
-
-    const minMaxHtml = this.config.show_minmax ? `
-      <div class="gauge-minmax">
-        <span class="gauge-min-outer"></span>
-        <span class="gauge-max-outer"></span>
-      </div>` : '';
-
+    // Structure HTML exacte du v0.7
     content.innerHTML = `
       <div class="gauge-dual">
         <div class="gauge-frame">
@@ -231,7 +239,8 @@ class DualGaugeCard extends HTMLElement {
           <div class="gauge-value gauge-value-inner"></div>
           <div class="gauge-label gauge-label-inner"></div>
           <div class="gauge-title"></div>
-          ${minMaxHtml}
+          <div class="click-zone click-zone-outer"></div>
+          <div class="click-zone click-zone-inner"></div>
         </div>
       </div>
     `;
@@ -242,22 +251,29 @@ class DualGaugeCard extends HTMLElement {
       outer: {
         value: content.querySelector('.gauge-value-outer'),
         label: content.querySelector('.gauge-label-outer'),
-        min:   content.querySelector('.gauge-min-outer'),
-        max:   content.querySelector('.gauge-max-outer'),
       },
       inner: {
         value: content.querySelector('.gauge-value-inner'),
         label: content.querySelector('.gauge-label-inner'),
-      }
+      },
     };
 
     if (this.config.title) {
       this.nodes.title.innerHTML = this.config.title;
-      this.nodes.title.addEventListener('click', () => this._showDetails('outer'));
     }
 
-    this.nodes.outer.value.addEventListener('click', () => this._showDetails('outer'));
-    this.nodes.inner.value.addEventListener('click', () => this._showDetails('inner'));
+    // Zones cliquables — deux moitiés de la carte
+    const zoneOuter = content.querySelector('.click-zone-outer');
+    const zoneInner = content.querySelector('.click-zone-inner');
+
+    if (this.config.outer.entity) {
+      zoneOuter.classList.add('clickable');
+      zoneOuter.addEventListener('click', () => this._showDetails('outer'));
+    }
+    if (this.config.inner.entity) {
+      zoneInner.classList.add('clickable');
+      zoneInner.addEventListener('click', () => this._showDetails('inner'));
+    }
 
     if (this.config.shadeInner)                    content.classList.add('shadeInner');
     if (!this.config.title && !this.config.header) content.classList.add('no-title');
@@ -272,18 +288,12 @@ class DualGaugeCard extends HTMLElement {
       this._resizeObserver.observe(this.card);
     }
 
-    if (this.config.background_color) {
+    if (this.config.background_color)
       this._setCssVariable(content, 'gauge-background-color', this.config.background_color);
-    }
-    if (this.config.stroke_width != null) {
+    if (this.config.stroke_width != null)
       this._setCssVariable(content, 'custom-gauge-width', this.config.stroke_width + 'px');
-    }
 
     this._initStyles();
-  }
-
-  _setCssVariable(node, variable, value) {
-    node.style.setProperty('--' + variable, value);
   }
 
   _initStyles() {
@@ -291,8 +301,9 @@ class DualGaugeCard extends HTMLElement {
     const gaugeWidth = this.config.stroke_width != null
       ? 'var(--custom-gauge-width)'
       : 'calc(var(--gauge-card-width) / 10.5)';
-    const cardW      = this.config.cardwidth ? 'var(--gauge-card-width)' : '100%';
+    const cardW = this.config.cardwidth ? 'var(--gauge-card-width)' : '100%';
 
+    // CSS identique au v0.7, + règles pour click-zone
     this.styles.innerHTML = `
       .gauge-dual-card {
         --gauge-card-width: 300px;
@@ -305,7 +316,6 @@ class DualGaugeCard extends HTMLElement {
         --value-font-size: calc(var(--gauge-card-width) / 17);
         --title-font-size: calc(var(--gauge-card-width) / 14);
         --label-font-size: calc(var(--gauge-card-width) / 20);
-        --minmax-font-size: calc(var(--gauge-card-width) / 26);
         width: ${cardW};
         padding: 16px;
         box-sizing: border-box;
@@ -335,7 +345,6 @@ class DualGaugeCard extends HTMLElement {
         position: absolute; bottom: 51%; margin-bottom: 0.1em;
         text-align: center; width: 100%;
         font-size: var(--title-font-size);
-        cursor: pointer;
       }
       .gauge-value, .gauge-label {
         position: absolute; bottom: 50%; width: 48%;
@@ -345,7 +354,6 @@ class DualGaugeCard extends HTMLElement {
         margin-bottom: 14%;
         font-size: var(--value-font-size);
         font-weight: bold;
-        cursor: pointer;
       }
       .gauge-label { font-size: var(--label-font-size); margin-bottom: 10%; }
       .no-title .gauge-value { margin-bottom: 4%; }
@@ -363,79 +371,55 @@ class DualGaugeCard extends HTMLElement {
       .shadeInner .gauge-value-inner,
       .shadeInner .gauge-label-inner,
       .shadeInner .inner-gauge .circle { filter: brightness(75%); }
-      .gauge-minmax {
-        position: absolute; bottom: 0; width: 100%;
-        display: flex; justify-content: space-between;
-        font-size: var(--minmax-font-size);
-        color: var(--secondary-text-color);
-        padding: 0 4%;
+
+      /* Zones cliquables — deux moitiés transparentes par-dessus tout */
+      .click-zone {
+        position: absolute;
+        top: 0; width: 50%; height: 100%;
+        z-index: 2;
       }
+      .click-zone-outer { left: 0; }
+      .click-zone-inner { right: 0; }
+      .click-zone.clickable { cursor: pointer; }
+      .click-zone.clickable:hover  { background: rgba(0,0,0,.04); border-radius: 4px; }
+      .click-zone.clickable:active { background: rgba(0,0,0,.10); border-radius: 4px; }
     `;
   }
 }
 
-// ---------------------------------------------------------------------------
-//  Visual Editor  –  LitElement-based for reactive sync
-// ---------------------------------------------------------------------------
+// =============================================================================
+//  Visual Editor
+// =============================================================================
 
-const LitElement = Object.getPrototypeOf(customElements.get('ha-panel-lovelace') || customElements.get('hui-view') || HTMLElement);
-const { html, css } = LitElement.prototype && LitElement.prototype.render ? LitElement : { html: String.raw, css: (s, ...v) => s.join('') };
-
-const USE_LIT = LitElement !== HTMLElement;
-
-class DualGaugeCardEditor extends (USE_LIT ? LitElement : HTMLElement) {
-
-  // ---- LitElement reactive props ----
-  static get properties() {
-    return {
-      hass:    { attribute: false },
-      _config: { state: true },
-    };
-  }
-
-  // ---- LitElement styles ----
-  static get styles() {
-    return USE_LIT ? (LitElement.styles || []) : [];
-  }
+class DualGaugeCardEditor extends HTMLElement {
 
   constructor() {
     super();
-    this._config      = {};
-    this._hass        = null;
+    this._config = {};
+    this._hass   = null;
+    this._shadow = this.attachShadow({ mode: 'open' });
   }
 
   set hass(hass) {
     this._hass = hass;
-    if (USE_LIT) {
-      this.requestUpdate();
-    } else {
-      this.querySelectorAll('ha-entity-picker').forEach(p => { p.hass = hass; });
-    }
+    this._shadow.querySelectorAll('ha-entity-picker').forEach(p => { p.hass = hass; });
   }
-
   get hass() { return this._hass; }
 
   setConfig(config) {
     this._config = JSON.parse(JSON.stringify(config));
-    if (USE_LIT) {
-      this.requestUpdate();
-    } else {
-      this._syncAllFields();
-    }
+    this._render();
   }
-
-  // ---- Helpers ----
 
   _fire() {
     this.dispatchEvent(new CustomEvent('config-changed', {
       detail: { config: JSON.parse(JSON.stringify(this._config)) },
-      bubbles: true,
-      composed: true,
+      bubbles: true, composed: true,
     }));
   }
 
   _set(path, value) {
-    const cfg   = JSON.parse(JSON.stringify(this._config));
+    const cfg = JSON.parse(JSON.stringify(this._config));
     const parts = path.split('.');
     let obj = cfg;
     for (let i = 0; i < parts.length - 1; i++) {
@@ -443,523 +427,239 @@ class DualGaugeCardEditor extends (USE_LIT ? LitElement : HTMLElement) {
       obj = obj[parts[i]];
     }
     const key = parts[parts.length - 1];
-    if (value === null || value === undefined || value === '') {
-      delete obj[key];
-    } else {
-      obj[key] = value;
-    }
+    if (value === null || value === undefined || value === '') delete obj[key];
+    else obj[key] = value;
     this._config = cfg;
-    if (USE_LIT) this.requestUpdate();
     this._fire();
+    this._syncValidation();
   }
 
-  // ---- Rendering ----
-
-  render() {
-    if (!this._config) return USE_LIT ? html`` : '';
+  _render() {
+    if (!this._config) return;
     const c = this._config;
     const o = c.outer || {};
     const i = c.inner || {};
+    const chk = v => v !== false ? 'checked' : '';
+    const outerErr = !o.entity && !o.template;
+    const innerErr = !i.entity && !i.template;
 
-    const content = this._buildEditorHTML(c, o, i);
-
-    if (USE_LIT) {
-      return html`${this._styleTag()}${content}`;
-    } else {
-      this.innerHTML = this._styleTag() + content;
-      this._attachListeners();
-    }
-  }
-
-  // ---- HTML template (used both by LitElement and plain HTMLElement) ----
-
-  _buildEditorHTML(c, o, i) {
-    const chk = (val) => val !== false ? 'checked' : '';
-
-    const colorsHtml = (gauge, colors) => (colors || []).map((col, idx) => `
-      <div class="color-row" data-gauge="${gauge}" data-idx="${idx}">
-        <input class="cv" type="number" placeholder="≥ value" value="${col.value ?? ''}">
-        <input class="cc" type="text" placeholder="var(--label-badge-green)" value="${col.color || ''}">
-        <input class="cp" type="color" value="${this._toHex(col.color)}" title="Pick color">
-        <button class="cd" title="Remove">✕</button>
-      </div>
-    `).join('');
-
-    const outerMissing = !o.entity && !o.template ? 'dgce-error' : '';
-    const innerMissing = !i.entity && !i.template ? 'dgce-error' : '';
-
-    return `
-      <div class="dgce">
-
-        <h3>General</h3>
-
-        <div class="fr">
-          <label>Card title (ha-card header)</label>
-          <input id="g-header" type="text" value="${c.header || ''}" placeholder="optional">
-        </div>
-        <div class="fr">
-          <label>Title inside gauge</label>
-          <input id="g-title" type="text" value="${c.title || ''}" placeholder="optional">
-        </div>
-        <div class="fr">
-          <label>Precision (decimal places)</label>
-          <input id="g-precision" type="number" min="0" max="10" value="${c.precision ?? 2}">
-        </div>
-        <div class="fr">
-          <label>Card width px (empty = auto)</label>
-          <input id="g-cardwidth" type="number" value="${c.cardwidth || ''}" placeholder="auto">
-        </div>
-        <div class="fr">
-          <label>Stroke width px (empty = auto)</label>
-          <input id="g-stroke" type="number" value="${c.stroke_width || ''}" placeholder="auto">
-        </div>
-        <div class="fr">
-          <label>Background color (empty = auto)</label>
-          <div class="color-pair">
-            <input id="g-bgcolor-text" type="text" value="${c.background_color || ''}" placeholder="var(--secondary-background-color)">
-            <input id="g-bgcolor-pick" type="color" value="${this._toHex(c.background_color)}" title="Pick color">
-          </div>
-        </div>
-        <div class="fr">
-          <label>Shade inner gauge</label>
-          <input id="g-shade" type="checkbox" ${chk(c.shadeInner !== false)}>
-        </div>
-        <div class="fr">
-          <label>Animate transitions</label>
-          <input id="g-animate" type="checkbox" ${chk(c.animate !== false)}>
-        </div>
-        <div class="fr">
-          <label>Show min / max labels</label>
-          <input id="g-minmax" type="checkbox" ${chk(c.show_minmax)}>
-        </div>
-
-        <h3 class="${outerMissing}">Outer Gauge ${outerMissing ? '⚠ entity required' : ''}</h3>
-        <div id="outer-picker-wrap"></div>
-        <div class="fr">
-          <label>Label</label>
-          <input id="o-label" type="text" value="${o.label || ''}" placeholder="kW">
-        </div>
-        <div class="fr">
-          <label>Unit (empty = from entity)</label>
-          <input id="o-unit" type="text" value="${o.unit !== undefined ? o.unit : ''}" placeholder="auto">
-        </div>
-        <div class="fr">
-          <label>Min</label>
-          <input id="o-min" type="number" value="${o.min ?? 0}">
-        </div>
-        <div class="fr">
-          <label>Max</label>
-          <input id="o-max" type="number" value="${o.max ?? 100}">
-        </div>
-        <div class="fr">
-          <label>Precision override (empty = inherit)</label>
-          <input id="o-precision" type="number" min="0" max="10" value="${o.precision != null && o.precision !== c.precision ? o.precision : ''}" placeholder="inherit">
-        </div>
-        <div class="colors-section">
-          <span>Color thresholds — applied when value ≥ threshold</span>
-          <div class="colors-list-outer">${colorsHtml('outer', o.colors)}</div>
-          <button class="add-btn add-outer">+ Add threshold</button>
-        </div>
-
-        <h3 class="${innerMissing}">Inner Gauge ${innerMissing ? '⚠ entity required' : ''}</h3>
-        <div id="inner-picker-wrap"></div>
-        <div class="fr">
-          <label>Label</label>
-          <input id="i-label" type="text" value="${i.label || ''}" placeholder="Amp">
-        </div>
-        <div class="fr">
-          <label>Unit (empty = from entity)</label>
-          <input id="i-unit" type="text" value="${i.unit !== undefined ? i.unit : ''}" placeholder="auto">
-        </div>
-        <div class="fr">
-          <label>Min</label>
-          <input id="i-min" type="number" value="${i.min ?? 0}">
-        </div>
-        <div class="fr">
-          <label>Max</label>
-          <input id="i-max" type="number" value="${i.max ?? 100}">
-        </div>
-        <div class="fr">
-          <label>Precision override (empty = inherit)</label>
-          <input id="i-precision" type="number" min="0" max="10" value="${i.precision != null && i.precision !== c.precision ? i.precision : ''}" placeholder="inherit">
-        </div>
-        <div class="colors-section">
-          <span>Color thresholds — applied when value ≥ threshold</span>
-          <div class="colors-list-inner">${colorsHtml('inner', i.colors)}</div>
-          <button class="add-btn add-inner">+ Add threshold</button>
-        </div>
-
-      </div>
-    `;
-  }
-
-  _styleTag() {
-    const s = `
+    this._shadow.innerHTML = `
       <style>
-        .dgce { padding: 16px 0; }
-        .dgce h3 {
-          margin: 20px 0 10px;
-          padding-bottom: 6px;
-          border-bottom: 1px solid var(--divider-color);
-          font-size: 12px; font-weight: 600;
-          text-transform: uppercase; letter-spacing: .06em;
-          color: var(--secondary-text-color);
-        }
-        .dgce h3:first-child { margin-top: 0; }
-        .dgce h3.dgce-error { color: var(--error-color); border-color: var(--error-color); }
-        .fr {
-          display: flex; align-items: center;
-          justify-content: space-between;
-          margin-bottom: 10px; gap: 10px;
-        }
+        :host { display: block; }
+        .dgce { padding: 4px 0 16px; }
+        h3 { margin: 20px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--divider-color); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--secondary-text-color); }
+        h3:first-child { margin-top: 4px; }
+        h3.err { color: var(--error-color); border-color: var(--error-color); }
+        .fr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 10px; }
         .fr label { font-size: 14px; color: var(--primary-text-color); flex: 1; min-width: 0; }
-        .fr input[type=text],
-        .fr input[type=number] {
-          width: 150px; padding: 6px 8px;
-          border: 1px solid var(--divider-color);
-          border-radius: 4px;
-          background: var(--card-background-color);
-          color: var(--primary-text-color);
-          font-size: 14px; flex-shrink: 0;
-        }
+        .fr input[type=text], .fr input[type=number] { width: 150px; padding: 6px 8px; border: 1px solid var(--divider-color); border-radius: 4px; background: var(--card-background-color); color: var(--primary-text-color); font-size: 14px; flex-shrink: 0; box-sizing: border-box; }
         .fr input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; flex-shrink: 0; }
         .color-pair { display: flex; gap: 6px; align-items: center; }
         .color-pair input[type=text] { width: 120px; }
-        input[type=color] {
-          width: 32px; height: 32px; padding: 2px; border-radius: 4px;
-          border: 1px solid var(--divider-color); cursor: pointer;
-          background: none; flex-shrink: 0;
-        }
-        ha-entity-picker { display: block; width: 100%; margin-bottom: 10px; }
-        .colors-section > span {
-          display: block; font-size: 12px;
-          color: var(--secondary-text-color); margin-bottom: 6px;
-        }
-        .color-row {
-          display: flex; gap: 6px; align-items: center; margin-bottom: 4px;
-        }
-        .color-row .cv {
-          width: 80px; padding: 4px 6px;
-          border: 1px solid var(--divider-color); border-radius: 4px;
-          background: var(--card-background-color);
-          color: var(--primary-text-color); font-size: 13px; flex-shrink: 0;
-        }
-        .color-row .cc {
-          flex: 1; padding: 4px 6px; min-width: 60px;
-          border: 1px solid var(--divider-color); border-radius: 4px;
-          background: var(--card-background-color);
-          color: var(--primary-text-color); font-size: 13px;
-        }
-        .color-row .cp {
-          width: 28px; height: 28px; flex-shrink: 0;
-        }
-        .color-row .cd {
-          background: none; border: none; cursor: pointer;
-          color: var(--error-color); font-size: 15px; padding: 2px 4px; flex-shrink: 0;
-        }
-        .add-btn {
-          display: block; width: 100%; margin-top: 6px;
-          padding: 5px; border-radius: 4px;
-          border: 1px dashed var(--primary-color);
-          background: none; color: var(--primary-color);
-          cursor: pointer; font-size: 13px;
-        }
+        input[type=color] { width: 32px; height: 32px; padding: 2px; border-radius: 4px; border: 1px solid var(--divider-color); cursor: pointer; background: none; flex-shrink: 0; }
+        ha-entity-picker { display: block; margin-bottom: 10px; }
+        .colors-section > span { display: block; font-size: 12px; color: var(--secondary-text-color); margin-bottom: 6px; }
+        .color-row { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; }
+        .color-row .cv { width: 80px; padding: 4px 6px; border: 1px solid var(--divider-color); border-radius: 4px; background: var(--card-background-color); color: var(--primary-text-color); font-size: 13px; flex-shrink: 0; box-sizing: border-box; }
+        .color-row .cc { flex: 1; padding: 4px 6px; min-width: 60px; border: 1px solid var(--divider-color); border-radius: 4px; background: var(--card-background-color); color: var(--primary-text-color); font-size: 13px; box-sizing: border-box; }
+        .color-row .cp { width: 28px; height: 28px; flex-shrink: 0; }
+        .color-row .cd { background: none; border: none; cursor: pointer; color: var(--error-color); font-size: 15px; padding: 2px 4px; flex-shrink: 0; }
+        .add-btn { display: block; width: 100%; margin-top: 6px; padding: 5px; border-radius: 4px; border: 1px dashed var(--primary-color); background: none; color: var(--primary-color); cursor: pointer; font-size: 13px; }
         .add-btn:hover { background: var(--primary-color); color: white; }
       </style>
+      <div class="dgce">
+        <h3>Général</h3>
+        <div class="fr"><label>Titre ha-card (header)</label><input id="g-header" type="text" value="${c.header || ''}" placeholder="optionnel"></div>
+        <div class="fr"><label>Titre dans la jauge</label><input id="g-title" type="text" value="${c.title || ''}" placeholder="optionnel"></div>
+        <div class="fr"><label>Précision (décimales)</label><input id="g-precision" type="number" min="0" max="10" value="${c.precision ?? 2}"></div>
+        <div class="fr"><label>Largeur carte px (vide = auto)</label><input id="g-cardwidth" type="number" value="${c.cardwidth || ''}" placeholder="auto"></div>
+        <div class="fr"><label>Épaisseur trait px (vide = auto)</label><input id="g-stroke" type="number" value="${c.stroke_width || ''}" placeholder="auto"></div>
+        <div class="fr"><label>Couleur fond</label><div class="color-pair"><input id="g-bgcolor-text" type="text" value="${c.background_color || ''}" placeholder="var(--secondary-background-color)"><input id="g-bgcolor-pick" type="color" value="${this._toHex(c.background_color)}"></div></div>
+        <div class="fr"><label>Assombrir jauge intérieure</label><input id="g-shade" type="checkbox" ${chk(c.shadeInner !== false)}></div>
+        <div class="fr"><label>Animer les transitions</label><input id="g-animate" type="checkbox" ${chk(c.animate !== false)}></div>
+
+        <h3 class="${outerErr ? 'err' : ''}" id="h3-outer">Jauge extérieure${outerErr ? ' ⚠ entité requise' : ''}</h3>
+        <div id="outer-picker-wrap"></div>
+        <div class="fr"><label>Label</label><input id="o-label" type="text" value="${o.label || ''}" placeholder="kW"></div>
+        <div class="fr"><label>Unité (vide = depuis entité)</label><input id="o-unit" type="text" value="${o.unit !== undefined ? o.unit : ''}" placeholder="auto"></div>
+        <div class="fr"><label>Min</label><input id="o-min" type="number" value="${o.min ?? 0}"></div>
+        <div class="fr"><label>Max</label><input id="o-max" type="number" value="${o.max ?? 100}"></div>
+        <div class="fr"><label>Précision (vide = héritage)</label><input id="o-precision" type="number" min="0" max="10" value="${o.precision != null && o.precision !== c.precision ? o.precision : ''}" placeholder="héritage"></div>
+        <div class="colors-section">
+          <span>Seuils de couleur — appliqués si valeur ≥ seuil</span>
+          <div id="colors-outer">${this._colorsHtml('outer', o.colors)}</div>
+          <button class="add-btn" id="add-outer">+ Ajouter un seuil</button>
+        </div>
+
+        <h3 class="${innerErr ? 'err' : ''}" id="h3-inner">Jauge intérieure${innerErr ? ' ⚠ entité requise' : ''}</h3>
+        <div id="inner-picker-wrap"></div>
+        <div class="fr"><label>Label</label><input id="i-label" type="text" value="${i.label || ''}" placeholder="Amp"></div>
+        <div class="fr"><label>Unité (vide = depuis entité)</label><input id="i-unit" type="text" value="${i.unit !== undefined ? i.unit : ''}" placeholder="auto"></div>
+        <div class="fr"><label>Min</label><input id="i-min" type="number" value="${i.min ?? 0}"></div>
+        <div class="fr"><label>Max</label><input id="i-max" type="number" value="${i.max ?? 100}"></div>
+        <div class="fr"><label>Précision (vide = héritage)</label><input id="i-precision" type="number" min="0" max="10" value="${i.precision != null && i.precision !== c.precision ? i.precision : ''}" placeholder="héritage"></div>
+        <div class="colors-section">
+          <span>Seuils de couleur — appliqués si valeur ≥ seuil</span>
+          <div id="colors-inner">${this._colorsHtml('inner', i.colors)}</div>
+          <button class="add-btn" id="add-inner">+ Ajouter un seuil</button>
+        </div>
+      </div>
     `;
-    if (USE_LIT) {
-      // Return as template literal for LitElement
-      return s;
-    }
-    return s;
-  }
 
-  // ---- After DOM is updated, inject entity pickers and listeners ----
-
-  updated() {
-    // LitElement calls this after render()
     this._injectPickers();
     this._attachListeners();
   }
 
-  connectedCallback() {
-    if (USE_LIT) {
-      super.connectedCallback && super.connectedCallback();
-    } else {
-      this.render();
+  _colorsHtml(gauge, colors) {
+    return (colors || []).map((col, idx) => `
+      <div class="color-row" data-gauge="${gauge}" data-idx="${idx}">
+        <input class="cv" type="number" placeholder="≥ valeur" value="${col.value ?? ''}">
+        <input class="cc" type="text" placeholder="var(--label-badge-green)" value="${col.color || ''}">
+        <input class="cp" type="color" value="${this._toHex(col.color)}" title="Choisir couleur">
+        <button class="cd" title="Supprimer">✕</button>
+      </div>`).join('');
+  }
+
+  _rebuildColorList(gauge) {
+    const el = this._shadow.querySelector('#colors-' + gauge);
+    if (el) el.innerHTML = this._colorsHtml(gauge, this._config[gauge]?.colors);
+  }
+
+  _syncValidation() {
+    for (const gauge of ['outer', 'inner']) {
+      const cfg     = this._config[gauge] || {};
+      const missing = !cfg.entity && !cfg.template;
+      const h3      = this._shadow.querySelector('#h3-' + gauge);
+      const label   = gauge === 'outer' ? 'Jauge extérieure' : 'Jauge intérieure';
+      if (h3) { h3.className = missing ? 'err' : ''; h3.textContent = label + (missing ? ' ⚠ entité requise' : ''); }
     }
   }
 
   _injectPickers() {
     for (const gauge of ['outer', 'inner']) {
-      const wrap = this.querySelector(`#${gauge}-picker-wrap`);
+      const wrap = this._shadow.querySelector('#' + gauge + '-picker-wrap');
       if (!wrap || wrap.querySelector('ha-entity-picker')) continue;
-      const cfg    = this._config[gauge] || {};
       const picker = document.createElement('ha-entity-picker');
-      picker.className = `entity-picker-${gauge}`;
-      picker.hass      = this._hass;
-      picker.value     = cfg.entity || '';
-      picker.label     = 'Entity';
+      picker.hass  = this._hass;
+      picker.value = (this._config[gauge] || {}).entity || '';
+      picker.label = 'Entité';
       picker.allowCustomEntity = false;
       picker.addEventListener('value-changed', e => {
         const v = e.detail.value;
         const updated = JSON.parse(JSON.stringify(this._config));
         if (!updated[gauge]) updated[gauge] = {};
-        if (v) {
-          updated[gauge].entity = v;
-          delete updated[gauge].template;
-        } else {
-          delete updated[gauge].entity;
-        }
+        if (v) { updated[gauge].entity = v; delete updated[gauge].template; }
+        else   { delete updated[gauge].entity; }
         this._config = updated;
-        if (USE_LIT) this.requestUpdate();
+        this._syncValidation();
         this._fire();
       });
       wrap.appendChild(picker);
     }
-
-    // Sync hass on existing pickers
-    this.querySelectorAll('ha-entity-picker').forEach(p => { p.hass = this._hass; });
   }
 
   _attachListeners() {
-    // Prevent double-binding by using a flag on the root element
-    const root = this.querySelector('.dgce');
-    if (!root || root._listenersAttached) return;
-    root._listenersAttached = true;
-
+    const sh = this._shadow;
     const bind = (id, path, transform) => {
-      const el = this.querySelector(`#${id}`);
-      if (!el || el._bound) return;
-      el._bound = true;
+      const el = sh.querySelector('#' + id);
+      if (!el) return;
       el.addEventListener('change', e => {
         const raw = el.type === 'checkbox' ? el.checked : e.target.value;
         this._set(path, transform ? transform(raw) : raw);
       });
     };
 
-    bind('g-header',     'header',        v => v || null);
-    bind('g-title',      'title',         v => v || null);
-    bind('g-precision',  'precision',     v => v !== '' ? parseInt(v) : null);
-    bind('g-cardwidth',  'cardwidth',     v => v ? parseInt(v) : null);
-    bind('g-stroke',     'stroke_width',  v => v ? parseInt(v) : null);
-    bind('g-shade',      'shadeInner',    v => v);
-    bind('g-animate',    'animate',       v => v);
-    bind('g-minmax',     'show_minmax',   v => v);
+    bind('g-header',    'header',       v => v || null);
+    bind('g-title',     'title',        v => v || null);
+    bind('g-precision', 'precision',    v => v !== '' ? parseInt(v) : null);
+    bind('g-cardwidth', 'cardwidth',    v => v ? parseInt(v) : null);
+    bind('g-stroke',    'stroke_width', v => v ? parseInt(v) : null);
+    bind('g-shade',     'shadeInner',   v => v);
+    bind('g-animate',   'animate',      v => v);
 
-    // Background color — text + native picker in sync
-    const bgText = this.querySelector('#g-bgcolor-text');
-    const bgPick = this.querySelector('#g-bgcolor-pick');
-    if (bgText && !bgText._bound) {
-      bgText._bound = true;
-      bgText.addEventListener('change', e => {
-        const v = e.target.value || null;
-        if (bgPick) bgPick.value = this._toHex(v);
-        this._set('background_color', v);
-      });
-    }
-    if (bgPick && !bgPick._bound) {
-      bgPick._bound = true;
-      bgPick.addEventListener('input', e => {
-        if (bgText) bgText.value = e.target.value;
-        this._set('background_color', e.target.value);
-      });
-    }
+    const bgText = sh.querySelector('#g-bgcolor-text');
+    const bgPick = sh.querySelector('#g-bgcolor-pick');
+    if (bgText) bgText.addEventListener('change', e => { if (bgPick) bgPick.value = this._toHex(e.target.value); this._set('background_color', e.target.value || null); });
+    if (bgPick) bgPick.addEventListener('input',  e => { if (bgText) bgText.value = e.target.value; this._set('background_color', e.target.value); });
 
     for (const [g, p] of [['o', 'outer'], ['i', 'inner']]) {
-      bind(`${g}-label`,     `${p}.label`,     v => v || null);
-      bind(`${g}-unit`,      `${p}.unit`,      v => v !== '' ? v : null);
-      bind(`${g}-min`,       `${p}.min`,       v => parseFloat(v));
-      bind(`${g}-max`,       `${p}.max`,       v => parseFloat(v));
-      bind(`${g}-precision`, `${p}.precision`, v => v !== '' ? parseInt(v) : null);
+      bind(g + '-label',     p + '.label',     v => v || null);
+      bind(g + '-unit',      p + '.unit',      v => v !== '' ? v : null);
+      bind(g + '-min',       p + '.min',       v => parseFloat(v));
+      bind(g + '-max',       p + '.max',       v => parseFloat(v));
+      bind(g + '-precision', p + '.precision', v => v !== '' ? parseInt(v) : null);
     }
 
-    // Color rows (delegated on containers)
     for (const gauge of ['outer', 'inner']) {
-      const container = this.querySelector(`.colors-list-${gauge}`);
-      if (container && !container._bound) {
-        container._bound = true;
-        container.addEventListener('change', e => {
-          const row = e.target.closest('.color-row');
-          if (!row) return;
-          const idx = parseInt(row.dataset.idx);
-          const cfg = JSON.parse(JSON.stringify(this._config));
-          if (!cfg[gauge].colors) cfg[gauge].colors = [];
-          if (e.target.classList.contains('cv')) {
-            cfg[gauge].colors[idx].value = parseFloat(e.target.value);
-          } else if (e.target.classList.contains('cc')) {
-            cfg[gauge].colors[idx].color = e.target.value;
-            // sync color picker
-            const cp = row.querySelector('.cp');
-            if (cp) cp.value = this._toHex(e.target.value);
-          }
-          this._config = cfg;
-          if (USE_LIT) this.requestUpdate();
-          this._fire();
-        });
-        container.addEventListener('input', e => {
-          if (!e.target.classList.contains('cp')) return;
-          const row = e.target.closest('.color-row');
-          if (!row) return;
-          const idx = parseInt(row.dataset.idx);
-          const cfg = JSON.parse(JSON.stringify(this._config));
-          if (!cfg[gauge].colors) cfg[gauge].colors = [];
-          cfg[gauge].colors[idx].color = e.target.value;
-          // sync text input
-          const cc = row.querySelector('.cc');
-          if (cc) cc.value = e.target.value;
-          this._config = cfg;
-          if (USE_LIT) this.requestUpdate();
-          this._fire();
-        });
-        container.addEventListener('click', e => {
-          if (!e.target.classList.contains('cd')) return;
-          const row = e.target.closest('.color-row');
-          if (!row) return;
-          const idx = parseInt(row.dataset.idx);
-          const cfg = JSON.parse(JSON.stringify(this._config));
-          cfg[gauge].colors.splice(idx, 1);
-          this._config = cfg;
-          if (USE_LIT) this.requestUpdate();
-          else this._rebuildColorList(gauge);
-          this._fire();
-        });
-      }
-    }
-
-    // Add threshold buttons
-    const addOuter = this.querySelector('.add-outer');
-    const addInner = this.querySelector('.add-inner');
-    if (addOuter && !addOuter._bound) {
-      addOuter._bound = true;
-      addOuter.addEventListener('click', () => {
+      const container = sh.querySelector('#colors-' + gauge);
+      if (!container) continue;
+      container.addEventListener('change', e => {
+        const row = e.target.closest('.color-row'); if (!row) return;
+        const idx = parseInt(row.dataset.idx);
         const cfg = JSON.parse(JSON.stringify(this._config));
-        if (!cfg.outer.colors) cfg.outer.colors = [];
-        cfg.outer.colors.push({ value: 0, color: '' });
-        this._config = cfg;
-        if (USE_LIT) this.requestUpdate();
-        else this._rebuildColorList('outer');
-        this._fire();
+        if (!cfg[gauge].colors) cfg[gauge].colors = [];
+        if (e.target.classList.contains('cv')) cfg[gauge].colors[idx].value = parseFloat(e.target.value);
+        else if (e.target.classList.contains('cc')) { cfg[gauge].colors[idx].color = e.target.value; const cp = row.querySelector('.cp'); if (cp) cp.value = this._toHex(e.target.value); }
+        this._config = cfg; this._fire();
       });
-    }
-    if (addInner && !addInner._bound) {
-      addInner._bound = true;
-      addInner.addEventListener('click', () => {
+      container.addEventListener('input', e => {
+        if (!e.target.classList.contains('cp')) return;
+        const row = e.target.closest('.color-row'); if (!row) return;
+        const idx = parseInt(row.dataset.idx);
         const cfg = JSON.parse(JSON.stringify(this._config));
-        if (!cfg.inner.colors) cfg.inner.colors = [];
-        cfg.inner.colors.push({ value: 0, color: '' });
-        this._config = cfg;
-        if (USE_LIT) this.requestUpdate();
-        else this._rebuildColorList('inner');
-        this._fire();
+        if (!cfg[gauge].colors) cfg[gauge].colors = [];
+        cfg[gauge].colors[idx].color = e.target.value;
+        const cc = row.querySelector('.cc'); if (cc) cc.value = e.target.value;
+        this._config = cfg; this._fire();
+      });
+      container.addEventListener('click', e => {
+        if (!e.target.classList.contains('cd')) return;
+        const row = e.target.closest('.color-row'); if (!row) return;
+        const idx = parseInt(row.dataset.idx);
+        const cfg = JSON.parse(JSON.stringify(this._config));
+        cfg[gauge].colors.splice(idx, 1);
+        this._config = cfg; this._rebuildColorList(gauge); this._fire();
       });
     }
+
+    const addOuter = sh.querySelector('#add-outer');
+    const addInner = sh.querySelector('#add-inner');
+    if (addOuter) addOuter.addEventListener('click', () => {
+      const cfg = JSON.parse(JSON.stringify(this._config));
+      if (!cfg.outer.colors) cfg.outer.colors = [];
+      cfg.outer.colors.push({ value: 0, color: '' });
+      this._config = cfg; this._rebuildColorList('outer'); this._fire();
+    });
+    if (addInner) addInner.addEventListener('click', () => {
+      const cfg = JSON.parse(JSON.stringify(this._config));
+      if (!cfg.inner.colors) cfg.inner.colors = [];
+      cfg.inner.colors.push({ value: 0, color: '' });
+      this._config = cfg; this._rebuildColorList('inner'); this._fire();
+    });
   }
 
-  // Fallback for plain HTMLElement path: rebuild only the color list rows
-  _rebuildColorList(gauge) {
-    const container = this.querySelector(`.colors-list-${gauge}`);
-    if (!container) return;
-    const colors = this._config[gauge]?.colors || [];
-    container.innerHTML = colors.map((c, idx) => `
-      <div class="color-row" data-gauge="${gauge}" data-idx="${idx}">
-        <input class="cv" type="number" placeholder="≥ value" value="${c.value ?? ''}">
-        <input class="cc" type="text" placeholder="var(--label-badge-green)" value="${c.color || ''}">
-        <input class="cp" type="color" value="${this._toHex(c.color)}" title="Pick color">
-        <button class="cd" title="Remove">✕</button>
-      </div>
-    `).join('');
-    // Re-apply heading error state
-    this._syncValidation();
-  }
-
-  _syncValidation() {
-    for (const gauge of ['outer', 'inner']) {
-      const h = this.querySelector(`h3.${gauge === 'outer' ? '' : ''}`)
-      // find all h3, check which one belongs to inner/outer by text content
-      this.querySelectorAll('h3').forEach(h3 => {
-        const txt = h3.textContent.toLowerCase();
-        if (txt.includes(gauge + ' gauge')) {
-          const cfg = this._config[gauge] || {};
-          const missing = !cfg.entity && !cfg.template;
-          h3.classList.toggle('dgce-error', missing);
-          h3.textContent = (gauge.charAt(0).toUpperCase() + gauge.slice(1)) + ' Gauge' + (missing ? ' ⚠ entity required' : '');
-        }
-      });
-    }
-  }
-
-  // Plain HTMLElement: sync all field values when setConfig is called
-  _syncAllFields() {
-    if (!this.querySelector('.dgce')) { this.render(); return; }
-    const c = this._config;
-    const o = c.outer || {};
-    const i = c.inner || {};
-
-    const set = (id, val) => { const el = this.querySelector(`#${id}`); if (el) el.value = val ?? ''; };
-    const setChk = (id, val) => { const el = this.querySelector(`#${id}`); if (el) el.checked = !!val; };
-
-    set('g-header',    c.header    || '');
-    set('g-title',     c.title     || '');
-    set('g-precision', c.precision ?? 2);
-    set('g-cardwidth', c.cardwidth || '');
-    set('g-stroke',    c.stroke_width || '');
-    set('g-bgcolor-text', c.background_color || '');
-    set('g-bgcolor-pick', this._toHex(c.background_color));
-    setChk('g-shade',   c.shadeInner !== false);
-    setChk('g-animate', c.animate   !== false);
-    setChk('g-minmax',  c.show_minmax);
-
-    set('o-label',     o.label     || '');
-    set('o-unit',      o.unit      !== undefined ? o.unit : '');
-    set('o-min',       o.min       ?? 0);
-    set('o-max',       o.max       ?? 100);
-    set('o-precision', o.precision != null && o.precision !== c.precision ? o.precision : '');
-
-    set('i-label',     i.label     || '');
-    set('i-unit',      i.unit      !== undefined ? i.unit : '');
-    set('i-min',       i.min       ?? 0);
-    set('i-max',       i.max       ?? 100);
-    set('i-precision', i.precision != null && i.precision !== c.precision ? i.precision : '');
-
-    this._rebuildColorList('outer');
-    this._rebuildColorList('inner');
-
-    // Sync entity pickers
-    for (const gauge of ['outer', 'inner']) {
-      const p = this.querySelector(`.entity-picker-${gauge}`);
-      const cfg = this._config[gauge] || {};
-      if (p) { p.value = cfg.entity || ''; p.hass = this._hass; }
-    }
-
-    this._syncValidation();
-  }
-
-  // ---- Utility: convert CSS variable or hex to #rrggbb for input[type=color] ----
   _toHex(color) {
     if (!color) return '#000000';
     if (/^#[0-9a-fA-F]{6}$/.test(color)) return color;
     if (/^#[0-9a-fA-F]{3}$/.test(color)) {
       const [, r, g, b] = color.match(/^#(.)(.)(.)$/);
-      return `#${r}${r}${g}${g}${b}${b}`;
+      return '#' + r+r + g+g + b+b;
     }
-    // CSS variable or named color — fall back to black; can't resolve without DOM
     return '#000000';
   }
 }
 
-// ---------------------------------------------------------------------------
+// =============================================================================
 //  Registration
-// ---------------------------------------------------------------------------
+// =============================================================================
 
 customElements.define('dual-gauge-card',        DualGaugeCard);
 customElements.define('dual-gauge-card-editor', DualGaugeCardEditor);
 
-// Register in HA card picker
 window.customCards = window.customCards || [];
 window.customCards.push({
   type:        'dual-gauge-card',
   name:        'Dual Gauge Card',
-  description: 'Displays two concentric gauge arcs for any two numeric entities.',
+  description: 'Affiche deux jauges concentriques pour deux entités numériques.',
   preview:     false,
 });
