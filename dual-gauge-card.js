@@ -1,11 +1,10 @@
 // =============================================================================
-//  Dual Gauge Card  –  v0.8.3
+//  Dual Gauge Card  –  v0.8.4
 //  Maintained fork of custom-cards/dual-gauge-card
-//  Basé sur v0.7.0 (structure DOM/CSS éprouvée) + améliorations:
-//    - Éditeur visuel complet (shadow DOM)
-//    - Zones cliquables: moitié gauche/droite de la carte
-//    - getCardSize(), window.customCards
-//    - _needsRebuild pour rebuild propre
+//  Changelog v0.8.4:
+//    - Ajout option text_color par jauge (outer/inner) — couleur indépendante
+//      de la jauge, avec fallback sur la couleur de jauge si non définie
+//    - Éditeur visuel : champ couleur texte (text+picker) pour outer et inner
 // =============================================================================
 
 class DualGaugeCard extends HTMLElement {
@@ -163,8 +162,19 @@ class DualGaugeCard extends HTMLElement {
     this.nodes[gauge].value.innerHTML = unit ? formatted + ' ' + unit : formatted;
     if (cfg.label) this.nodes[gauge].label.innerHTML = cfg.label;
 
-    const color = this._findColor(value, cfg);
-    if (color) this._setCssVariable(this.nodes.content, gauge + '-color', color);
+    // Couleur de la jauge (arc)
+    const gaugeColor = this._findColor(value, cfg);
+    if (gaugeColor) this._setCssVariable(this.nodes.content, gauge + '-color', gaugeColor);
+
+    // Couleur du texte : text_color en priorité, sinon couleur de la jauge, sinon CSS var
+    const textColor = cfg.text_color || gaugeColor || null;
+    if (textColor) {
+      this.nodes[gauge].value.style.color = textColor;
+      this.nodes[gauge].label.style.color = textColor;
+    } else {
+      this.nodes[gauge].value.style.color = '';
+      this.nodes[gauge].label.style.color = '';
+    }
   }
 
   _showDetails(gauge) {
@@ -206,18 +216,11 @@ class DualGaugeCard extends HTMLElement {
     node.style.setProperty('--' + variable, value);
   }
 
-  // -----------------------------------------------------------------------
-  //  _createCard — structure DOM identique au v0.7 qui fonctionnait,
-  //  avec en plus deux zones cliquables transparentes (gauche/droite).
-  // -----------------------------------------------------------------------
-
   _createCard() {
     if (this.card) this.card.remove();
     this.card = document.createElement('ha-card');
     if (this.config.header) this.card.header = this.config.header;
 
-    // Le <style> ET le content sont enfants directs de ha-card.
-    // C'est le pattern exact du v0.7 original qui fonctionnait.
     const content = document.createElement('div');
     content.classList.add('gauge-dual-card');
     this.card.appendChild(content);
@@ -227,11 +230,11 @@ class DualGaugeCard extends HTMLElement {
 
     this.appendChild(this.card);
 
-    // Structure HTML exacte du v0.7
     content.innerHTML = `
       <div class="gauge-dual">
         <div class="gauge-frame">
           <div class="gauge-background circle-container"><div class="circle"></div></div>
+          <div class="gauge-background-inner circle-container small-circle"><div class="circle"></div></div>
           <div class="outer-gauge circle-container"><div class="circle"></div></div>
           <div class="inner-gauge circle-container small-circle"><div class="circle"></div></div>
           <div class="gauge-value gauge-value-outer"></div>
@@ -258,14 +261,10 @@ class DualGaugeCard extends HTMLElement {
       },
     };
 
-    if (this.config.title) {
-      this.nodes.title.innerHTML = this.config.title;
-    }
+    if (this.config.title) this.nodes.title.innerHTML = this.config.title;
 
-    // Zones cliquables — deux moitiés de la carte
     const zoneOuter = content.querySelector('.click-zone-outer');
     const zoneInner = content.querySelector('.click-zone-inner');
-
     if (this.config.outer.entity) {
       zoneOuter.classList.add('clickable');
       zoneOuter.addEventListener('click', () => this._showDetails('outer'));
@@ -293,6 +292,12 @@ class DualGaugeCard extends HTMLElement {
     if (this.config.stroke_width != null)
       this._setCssVariable(content, 'custom-gauge-width', this.config.stroke_width + 'px');
 
+    // Couleurs de texte fixes (si définies, sinon le CSS fallback sur la couleur de jauge)
+    if (this.config.outer.text_color)
+      this._setCssVariable(content, 'outer-text-color', this.config.outer.text_color);
+    if (this.config.inner.text_color)
+      this._setCssVariable(content, 'inner-text-color', this.config.inner.text_color);
+
     this._initStyles();
   }
 
@@ -303,19 +308,20 @@ class DualGaugeCard extends HTMLElement {
       : 'calc(var(--gauge-card-width) / 10.5)';
     const cardW = this.config.cardwidth ? 'var(--gauge-card-width)' : '100%';
 
-    // CSS identique au v0.7, + règles pour click-zone
     this.styles.innerHTML = `
       .gauge-dual-card {
         --gauge-card-width: 300px;
         --outer-color: var(--primary-color);
         --inner-color: var(--primary-color);
+        --outer-text-color: var(--outer-color);
+        --inner-text-color: var(--inner-color);
         --gauge-background-color: var(--secondary-background-color);
         --outer-angle: 90deg;
         --inner-angle: 90deg;
         --gauge-width: ${gaugeWidth};
-        --value-font-size: calc(var(--gauge-card-width) / 17);
+        --value-font-size: calc((var(--gauge-card-width) - var(--gauge-width) * 4) / 10);
         --title-font-size: calc(var(--gauge-card-width) / 14);
-        --label-font-size: calc(var(--gauge-card-width) / 20);
+        --label-font-size: calc((var(--gauge-card-width) - var(--gauge-width) * 4) / 13);
         width: ${cardW};
         padding: 16px;
         box-sizing: border-box;
@@ -339,7 +345,12 @@ class DualGaugeCard extends HTMLElement {
       }
       .small-circle .circle { top: 20%; left: 10%; width: 80%; height: 160%; }
       .gauge-background .circle {
-        border: calc(var(--gauge-width) * 2 - 2px) solid var(--gauge-background-color);
+        border-width: var(--gauge-width);
+        border-color: var(--gauge-background-color);
+      }
+      .gauge-background-inner .circle {
+        border-width: var(--gauge-width);
+        border-color: var(--gauge-background-color);
       }
       .gauge-title {
         position: absolute; bottom: 51%; margin-bottom: 0.1em;
@@ -359,10 +370,12 @@ class DualGaugeCard extends HTMLElement {
       .no-title .gauge-value { margin-bottom: 4%; }
       .no-title .gauge-label { margin-bottom: 0%; }
       .gauge-value-outer, .gauge-label-outer {
-        right: 50%; text-align: right; padding-right: 8px; color: var(--outer-color);
+        right: 50%; text-align: right; padding-right: 8px;
+        color: var(--outer-text-color, var(--outer-color));
       }
       .gauge-value-inner, .gauge-label-inner {
-        left: 50%; text-align: left; padding-left: 8px; color: var(--inner-color);
+        left: 50%; text-align: left; padding-left: 8px;
+        color: var(--inner-text-color, var(--inner-color));
       }
       .outer-gauge { transform: rotate(var(--outer-angle)); }
       .outer-gauge .circle { border-color: var(--outer-color); }
@@ -371,8 +384,6 @@ class DualGaugeCard extends HTMLElement {
       .shadeInner .gauge-value-inner,
       .shadeInner .gauge-label-inner,
       .shadeInner .inner-gauge .circle { filter: brightness(75%); }
-
-      /* Zones cliquables — deux moitiés transparentes par-dessus tout */
       .click-zone {
         position: absolute;
         top: 0; width: 50%; height: 100%;
@@ -434,6 +445,17 @@ class DualGaugeCardEditor extends HTMLElement {
     this._syncValidation();
   }
 
+  _colorRow(id, label, value) {
+    return `
+      <div class="fr">
+        <label>${label}</label>
+        <div class="color-pair">
+          <input id="${id}-text" type="text" value="${value || ''}" placeholder="var(--primary-color)">
+          <input id="${id}-pick" type="color" value="${this._toHex(value)}">
+        </div>
+      </div>`;
+  }
+
   _render() {
     if (!this._config) return;
     const c = this._config;
@@ -474,7 +496,7 @@ class DualGaugeCardEditor extends HTMLElement {
         <div class="fr"><label>Précision (décimales)</label><input id="g-precision" type="number" min="0" max="10" value="${c.precision ?? 2}"></div>
         <div class="fr"><label>Largeur carte px (vide = auto)</label><input id="g-cardwidth" type="number" value="${c.cardwidth || ''}" placeholder="auto"></div>
         <div class="fr"><label>Épaisseur trait px (vide = auto)</label><input id="g-stroke" type="number" value="${c.stroke_width || ''}" placeholder="auto"></div>
-        <div class="fr"><label>Couleur fond</label><div class="color-pair"><input id="g-bgcolor-text" type="text" value="${c.background_color || ''}" placeholder="var(--secondary-background-color)"><input id="g-bgcolor-pick" type="color" value="${this._toHex(c.background_color)}"></div></div>
+        ${this._colorRow('g-bgcolor', 'Couleur fond', c.background_color)}
         <div class="fr"><label>Assombrir jauge intérieure</label><input id="g-shade" type="checkbox" ${chk(c.shadeInner !== false)}></div>
         <div class="fr"><label>Animer les transitions</label><input id="g-animate" type="checkbox" ${chk(c.animate !== false)}></div>
 
@@ -485,6 +507,7 @@ class DualGaugeCardEditor extends HTMLElement {
         <div class="fr"><label>Min</label><input id="o-min" type="number" value="${o.min ?? 0}"></div>
         <div class="fr"><label>Max</label><input id="o-max" type="number" value="${o.max ?? 100}"></div>
         <div class="fr"><label>Précision (vide = héritage)</label><input id="o-precision" type="number" min="0" max="10" value="${o.precision != null && o.precision !== c.precision ? o.precision : ''}" placeholder="héritage"></div>
+        ${this._colorRow('o-textcolor', 'Couleur texte (vide = couleur jauge)', o.text_color)}
         <div class="colors-section">
           <span>Seuils de couleur — appliqués si valeur ≥ seuil</span>
           <div id="colors-outer">${this._colorsHtml('outer', o.colors)}</div>
@@ -498,6 +521,7 @@ class DualGaugeCardEditor extends HTMLElement {
         <div class="fr"><label>Min</label><input id="i-min" type="number" value="${i.min ?? 0}"></div>
         <div class="fr"><label>Max</label><input id="i-max" type="number" value="${i.max ?? 100}"></div>
         <div class="fr"><label>Précision (vide = héritage)</label><input id="i-precision" type="number" min="0" max="10" value="${i.precision != null && i.precision !== c.precision ? i.precision : ''}" placeholder="héritage"></div>
+        ${this._colorRow('i-textcolor', 'Couleur texte (vide = couleur jauge)', i.text_color)}
         <div class="colors-section">
           <span>Seuils de couleur — appliqués si valeur ≥ seuil</span>
           <div id="colors-inner">${this._colorsHtml('inner', i.colors)}</div>
@@ -558,6 +582,20 @@ class DualGaugeCardEditor extends HTMLElement {
     }
   }
 
+  _bindColorPair(textId, pickId, path) {
+    const sh   = this._shadow;
+    const txt  = sh.querySelector('#' + textId);
+    const pick = sh.querySelector('#' + pickId);
+    if (txt) txt.addEventListener('change', e => {
+      if (pick) pick.value = this._toHex(e.target.value);
+      this._set(path, e.target.value || null);
+    });
+    if (pick) pick.addEventListener('input', e => {
+      if (txt) txt.value = e.target.value;
+      this._set(path, e.target.value);
+    });
+  }
+
   _attachListeners() {
     const sh = this._shadow;
     const bind = (id, path, transform) => {
@@ -577,10 +615,9 @@ class DualGaugeCardEditor extends HTMLElement {
     bind('g-shade',     'shadeInner',   v => v);
     bind('g-animate',   'animate',      v => v);
 
-    const bgText = sh.querySelector('#g-bgcolor-text');
-    const bgPick = sh.querySelector('#g-bgcolor-pick');
-    if (bgText) bgText.addEventListener('change', e => { if (bgPick) bgPick.value = this._toHex(e.target.value); this._set('background_color', e.target.value || null); });
-    if (bgPick) bgPick.addEventListener('input',  e => { if (bgText) bgText.value = e.target.value; this._set('background_color', e.target.value); });
+    this._bindColorPair('g-bgcolor-text',    'g-bgcolor-pick',    'background_color');
+    this._bindColorPair('o-textcolor-text',  'o-textcolor-pick',  'outer.text_color');
+    this._bindColorPair('i-textcolor-text',  'i-textcolor-pick',  'inner.text_color');
 
     for (const [g, p] of [['o', 'outer'], ['i', 'inner']]) {
       bind(g + '-label',     p + '.label',     v => v || null);
