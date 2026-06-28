@@ -9,16 +9,30 @@ A Lovelace card displaying two concentric gauges in a single visual component �
 
 ---
 
-## ✨ What's new in v0.8.3
+## ✨ What's new in v0.8.4
 
-- **Visual editor** : full GUI editor in the Lovelace card picker — no more YAML required for basic setup
-- **Clickable zones** : the left half opens the outer entity detail, the right half opens the inner entity detail — with `cursor: pointer` and hover feedback
-- **Card picker registration** : the card now appears in the "Add card" dialog via `window.customCards`
-- **`getCardSize()`** : proper HA layout sizing
-- **`header` option** : native `ha-card` title support (above the card)
-- **`background_color` option** : configurable gauge track color
-- **Smart rebuild** : structural config changes (title, animation, stroke width…) trigger a clean card rebuild without full page reload
-- **Bug fix** : `precision` option now works correctly at both card and gauge level
+### Independent text color per gauge
+Each gauge now has an optional `text_color` option that sets the color of the value and label independently from the gauge arc color.
+
+**Priority order:**
+1. `text_color` if defined → used for value + label
+2. Color threshold (`colors`) if matched → used for arc **and** text
+3. Default CSS variable (`--primary-color`) as fallback
+
+**YAML example:**
+```yaml
+type: custom:dual-gauge-card
+outer:
+  entity: sensor.power
+  label: kW
+  text_color: "#ffffff"
+inner:
+  entity: sensor.current
+  label: Amp
+  text_color: "var(--primary-text-color)"
+```
+
+The visual editor also exposes this option under each gauge section as a text field + color picker.
 
 ---
 
